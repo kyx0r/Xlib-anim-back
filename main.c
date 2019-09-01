@@ -43,7 +43,8 @@ pthread_mutex_t lock;
 static void SetBackgroundToBitmap(Pixmap bitmap, unsigned int width, unsigned int height);
 void SetPixel32(uint32_t* buf, int w, int h, int x, int y, uint32_t pixel);
 Pixmap GetRootPixmap(Display* display, Window *root);
-void algorithm();
+void CircleFrac();
+void Galaxy();
 
 int main(int argc, char *argv[]) 
 {
@@ -67,7 +68,7 @@ int main(int argc, char *argv[])
 
     pool[0] = threadpool_create(1, 8096, 0);
 
-    ASSERT(threadpool_add(pool[0], &algorithm, img, 0) == 0, "Failed threadpool_add");    
+    ASSERT(threadpool_add(pool[0], &CircleFrac, img, 0) == 0, "Failed threadpool_add");    
     
     //XImage* img = XGetImage(dpy, root, 0, 0, w, h, ~0, ZPixmap);
 
@@ -112,7 +113,85 @@ struct particle
   double direction;
 };
 
-void algorithm(XImage* img)
+void CircleFrac(XImage* img)
+{
+  int copy = 0;
+  clock_t t1;
+  clock_t t2 = 0;
+  clock_t diff;
+  int i = 0;
+  //double dmlsec;
+  uint32_t ticks;
+  uint32_t interval;
+  uint32_t prev = 0;
+  
+  unsigned long val = 0;
+  struct particle buf[4096];
+
+  for(i = 0; i<4096; i++)
+    {
+      buf[i].direction = (2 * M_PI * rand()) / RAND_MAX;
+      buf[i].speed = (0.08 * rand()) / RAND_MAX;
+      buf[i].speed *= buf[i].speed;
+    }
+  
+  while(1)
+    {
+      t1 = clock();
+      ticks += t1;
+      unsigned char red = (unsigned char)((1 + sin(ticks * 0.0001)) * 128);
+      unsigned char green = (unsigned char)((1 + sin(ticks * 0.0002)) * 128);
+      unsigned char blue = (unsigned char)((1 + sin(ticks * 0.0003)) * 128);       
+      diff = t1-t2;
+
+      //dmlsec += (double)(diff)/CLOCKS_PER_SEC * 1000;
+      
+      // printf("%lf \n", dmlsec);
+
+      interval = ticks - prev;
+      
+      for(i = 0; i<4096; i++)
+	{
+	  buf[i].direction += (diff) * 0.000635;
+	  buf[i].x += (buf[i].speed * cos(buf[i].direction)) * diff;
+	  buf[i].y += (buf[i].speed * sin(buf[i].direction)) * diff;
+	}
+
+      prev = ticks;
+      
+      pthread_mutex_lock(&lock);
+      copy = left;
+      pthread_mutex_unlock(&lock);      
+      if(diff > 1 || copy > 0)
+	{
+	  for(i=0; i<4096; i++)
+	    {
+	      int x = (buf[i].x + 1) * (w/2);
+	      int y = (buf[i].y * (w/2)) + (h/2);
+	      if (x < 0 || x >= w || y < 0 || y >= h)
+	      	{
+	      	  continue;
+	      	}
+	      
+	      val+=blue;
+	      val <<=8;
+	      val+=green;
+	      val <<=8;
+	      val+=red;
+	      val <<=8;
+	      XPutPixel(img, x, y, val);
+	    }
+ 	}
+      else
+	{				   	    
+	  sleep(1);    		    
+	}
+      t2 = clock();
+    }
+  return;
+}
+
+void Galaxy(XImage* img)
 {
   int copy = 0;
   clock_t t1;
@@ -154,7 +233,6 @@ void algorithm(XImage* img)
 	  buf[i].direction += (interval) * 0.000635;
 	  buf[i].x += (buf[i].speed * cos(buf[i].direction)) * interval;
 	  buf[i].y += (buf[i].speed * sin(buf[i].direction)) * interval;
-	  //	  printf("x: %lf\n", (double)buf[i].x);
 	}
 
       prev = ticks;
@@ -168,7 +246,6 @@ void algorithm(XImage* img)
 	    {
 	      int x = (buf[i].x + 1) * (w/2);
 	      int y = (buf[i].y * (w/2)) + (h/2);
-	      //printf("x: %d\n", x);
 	      if (x < 0 || x >= w || y < 0 || y >= h)
 	      	{
 	      	  continue;
@@ -180,11 +257,6 @@ void algorithm(XImage* img)
 	      val <<=8;
 	      val+=red;
 	      val <<=8;
-	      //printf("x: %d\n", (int)(buf[i].x + 1) * 1920/2);
-	      /* XPutPixel(img, 10, 10, val); */
-	      /* XPutPixel(img, 11, 11, val); */
-	      /* XPutPixel(img, 11, 10, val); */
-	      /* XPutPixel(img, 10, 11, val); */
 	      XPutPixel(img, x, y, val);
 	    }
  	}
