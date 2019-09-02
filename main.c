@@ -41,13 +41,17 @@ threadpool_t *pool[64];
 int left;
 pthread_mutex_t lock;
 uint64_t timer_offset;
+GC gc;
+Pixmap tmpPix;
 
 static void SetBackgroundToBitmap(Pixmap bitmap, unsigned int width, unsigned int height);
 void SetPixel32(uint32_t* buf, int w, int h, int x, int y, uint32_t pixel);
 Pixmap GetRootPixmap(Display* display, Window *root);
+GC create_gc(Display* display, Window win, int reverse_video);
 void CircleFrac();
 void SnowFlake();
 void Galaxy();
+void CirclePurge();
 uint64_t GetTimerValue();
 double GetTime();
 
@@ -59,7 +63,7 @@ int main(int argc, char *argv[])
     root = XRootWindow(dpy, screen);
     ASSERT(root, "Unable to open root window!");
     w = XDisplayWidth(dpy, screen);
-    h = XDisplayHeight(dpy, screen);
+    h = XDisplayHeight(dpy, screen);   
 
     Visual* visual = DefaultVisual(dpy, screen);
 
@@ -71,16 +75,20 @@ int main(int argc, char *argv[])
 
     pthread_mutex_init(&lock, NULL);
 
-    pool[0] = threadpool_create(1, 8096, 0);
+    pool[0] = threadpool_create(4, 16192, 0);
 
     ASSERT(threadpool_add(pool[0], &CircleFrac, img, 0) == 0, "Failed threadpool_add");
-
+    ASSERT(threadpool_add(pool[0], &SnowFlake, img, 0) == 0, "Failed threadpool_add");
+    ASSERT(threadpool_add(pool[0], &Galaxy, img, 0) == 0, "Failed threadpool_add");
+    ASSERT(threadpool_add(pool[0], &CirclePurge, img, 0) == 0, "Failed threadpool_add");
+    
     timer_offset = GetTimerValue();
     
     //XImage* img = XGetImage(dpy, root, 0, 0, w, h, ~0, ZPixmap);
 
-    Pixmap tmpPix = XCreatePixmap(dpy, root, w, h, DefaultDepth(dpy, screen));
-    
+    tmpPix = XCreatePixmap(dpy, root, w, h, DefaultDepth(dpy, screen));
+    //gc = create_gc(dpy, tmpPix, 0);
+     
     double t1 = 0;
     double t2 = 0;
     double diff = 0;
@@ -129,8 +137,9 @@ void SnowFlake(XImage* img)
   double diff = 0;
   int i = 0;
   clock_t ticks;
+  int transition = 0;
+  uint32_t color = 0xFFFFFFFF;
   
-  unsigned long val = 0;
   struct particle buf[4096];
 
   for(i = 0; i<4096; i++)
@@ -145,9 +154,6 @@ void SnowFlake(XImage* img)
       ticks += clock();
       t1 = GetTime();
       diff = t1-t2;            
-      unsigned char red = (unsigned char)((1 + sin(ticks * 0.0001)) * 128);
-      unsigned char green = (unsigned char)((1 + sin(ticks * 0.0002)) * 128);
-      unsigned char blue = (unsigned char)((1 + sin(ticks * 0.0003)) * 128);
 
       for(i = 0; i<4096; i++)
 	{
@@ -167,17 +173,33 @@ void SnowFlake(XImage* img)
 	      int y = (buf[i].y * (w/2)) + (h/2);
 	      if (x < 0 || x >= w || y < 0 || y >= h)
 	      	{
+		  transition++;
 	      	  continue;
 	      	}
-	      
-	      val+=blue;
-	      val <<=8;
-	      val+=green;
-	      val <<=8;
-	      val+=red;
-	      val <<=8;
-	      XPutPixel(img, x, y, val);
+	      XPutPixel(img, x, y, color);
 	    }
+	  //printf("%d\n", transition);
+	  if(transition > 1000)
+	    {
+	      for(i = 0; i<4096; i++)
+		{
+		  buf[i].x = 0;
+		  buf[i].y = 0;
+		}
+	      unsigned char red = (unsigned char)((1 + sin(ticks * 0.0001)) * 128);
+	      unsigned char green = (unsigned char)((1 + sin(ticks * 0.0002)) * 128);
+	      unsigned char blue = (unsigned char)((1 + sin(ticks * 0.0003)) * 128);
+	      unsigned char alpha = (unsigned char)((1 + sin(ticks * 0.0004)) * 128);
+	      color = 0;
+	      color+=blue;
+	      color <<=8;
+	      color+=green;
+	      color <<=8;
+	      color+=red;
+	      color <<=8;
+	      color +=alpha;
+	    }
+	  transition = 0;
  	}
       else
 	{
@@ -188,6 +210,122 @@ void SnowFlake(XImage* img)
     }
   return;
 }
+
+void Circle(XImage* img, int32_t centreX, int32_t centreY, int32_t radius, uint32_t color)
+{
+  const int32_t diameter = (radius * 2);
+
+  int32_t x = (radius - 1);
+  int32_t y = 0;
+  int32_t tx = 1;
+  int32_t ty = 1;
+  int32_t error = (tx - diameter);
+
+  while (x >= y)
+    {
+      //  Each of the following renders an octant of the circle
+      if (!(centreX + x < 0 || centreX + x >= w || centreY - y < 0 || centreY - y >= h))
+	{
+	  XPutPixel(img, centreX + x, centreY - y, color);
+	}
+
+      if (!(centreX - x < 0 || centreX - x >= w || centreY + y < 0 || centreY + y >= h))
+	{
+	  XPutPixel(img, centreX - x, centreY + y, color);
+	}
+
+      if (!(centreX + x < 0 || centreX + x >= w || centreY + y < 0 || centreY + y >= h))
+	{
+	  XPutPixel(img, centreX + x, centreY + y, color);
+	}
+
+      if (!(centreX - x < 0 || centreX - x >= w || centreY - y < 0 || centreY - y >= h))
+	{
+ 	  XPutPixel(img, centreX - x, centreY - y, color);
+	}      
+
+      if (!(centreX + y < 0 || centreX + y >= w || centreY - x < 0 || centreY - x >= h))
+	{	      		  	  
+	  XPutPixel(img, centreX + y, centreY - x, color);
+	}      
+
+      if (!(centreX - y < 0 || centreX - y >= w || centreY + x < 0 || centreY + x >= h))
+	{	      
+	  XPutPixel(img, centreX - y, centreY + x, color);
+	}
+
+      if (!(centreX + y < 0 || centreX + y >= w || centreY + x < 0 || centreY + x >= h))
+	{	      
+	  XPutPixel(img, centreX + y, centreY + x, color);
+
+	}
+
+      if (!(centreX - y < 0 || centreX - y >= w || centreY - x < 0 || centreY - x >= h))
+	{	      
+	  XPutPixel(img, centreX - y, centreY - x, color);
+	}
+	  
+      if (error <= 0)
+	{
+	  ++y;
+	  error += ty;
+	  ty += 2;
+	}
+
+      if (error > 0)
+	{
+	  --x;
+	  tx += 2;
+	  error += (tx - diameter);
+	}
+    }
+}
+
+void CirclePurge(XImage* img)
+{
+  double t1 = 0;
+  double t2 = 0;
+  double diff = 0;
+  int i = 10;
+  uint32_t color = 0;
+
+  int x = w/2;
+  int y = h/2;
+  int limit;
+  if(x>y)
+    {
+      limit = x;
+    }
+  else
+    {
+      limit = y;
+    }
+  
+  while(1)
+    {
+      t1 = GetTime();
+      diff = t1-t2;            
+
+      i++;
+      
+      if(diff > 0.01f)
+	{
+	  Circle(img, x, y, i, color);
+	  if(i>limit+150) //accomodate the curve
+	    {
+	      i = 10;
+	    }
+ 	}
+      else
+	{
+	  usleep((uint64_t)(diff * 1000000));
+	  continue;
+	}
+      t2 = GetTime();
+    }
+  return;
+}
+
 
 void CircleFrac(XImage* img)
 {
@@ -249,6 +387,7 @@ void CircleFrac(XImage* img)
 	      val <<=8;
 	      val+=red;
 	      val <<=8;
+	      //	      val +=0xFF;
 	      XPutPixel(img, x, y, val);
 	    }
  	}
@@ -320,6 +459,7 @@ void Galaxy(XImage* img)
 	      val <<=8;
 	      val+=red;
 	      val <<=8;
+	      val +=0xFF;
 	      XPutPixel(img, x, y, val);
 	    }
  	}
@@ -410,4 +550,41 @@ uint64_t GetTimerValue()
 double GetTime()
 {
   return (double)(GetTimerValue()-timer_offset) / 1000000;
+}
+
+GC create_gc(Display* display, Window win, int reverse_video)
+{
+  GC gc;				/* handle of newly created GC.  */
+  unsigned long valuemask = 0;		/* which values in 'values' to  */
+					/* check when creating the GC.  */
+  XGCValues values;			/* initial values for the GC.   */
+  unsigned int line_width = 2;		/* line width for the GC.       */
+  int line_style = LineSolid;		/* style for lines drawing and  */
+  int cap_style = CapButt;		/* style of the line's edje and */
+  int join_style = JoinBevel;		/*  joined lines.		*/
+  int screen_num = DefaultScreen(display);
+
+  gc = XCreateGC(display, win, valuemask, &values);
+  if (gc < 0) {
+	fprintf(stderr, "XCreateGC: \n");
+  }
+
+  /* allocate foreground and background colors for this GC. */
+  if (reverse_video) {
+    XSetForeground(display, gc, WhitePixel(display, screen_num));
+    XSetBackground(display, gc, BlackPixel(display, screen_num));
+  }
+  else {
+    XSetForeground(display, gc, BlackPixel(display, screen_num));
+    XSetBackground(display, gc, WhitePixel(display, screen_num));
+  }
+
+  /* define the style of lines that will be drawn using this GC. */
+  XSetLineAttributes(display, gc,
+                     line_width, line_style, cap_style, join_style);
+
+  /* define the fill style for the GC. to be 'solid filling'. */
+  XSetFillStyle(display, gc, FillSolid);
+
+  return gc;
 }
