@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "sys/time.h"
 #include <unistd.h>
 #include <stdint.h>
 #include <pthread.h>
@@ -39,12 +40,16 @@ int h;
 threadpool_t *pool[64];
 int left;
 pthread_mutex_t lock;
+uint64_t timer_offset;
 
 static void SetBackgroundToBitmap(Pixmap bitmap, unsigned int width, unsigned int height);
 void SetPixel32(uint32_t* buf, int w, int h, int x, int y, uint32_t pixel);
 Pixmap GetRootPixmap(Display* display, Window *root);
 void CircleFrac();
+void SnowFlake();
 void Galaxy();
+uint64_t GetTimerValue();
+double GetTime();
 
 int main(int argc, char *argv[]) 
 {
@@ -68,37 +73,40 @@ int main(int argc, char *argv[])
 
     pool[0] = threadpool_create(1, 8096, 0);
 
-    ASSERT(threadpool_add(pool[0], &CircleFrac, img, 0) == 0, "Failed threadpool_add");    
+    ASSERT(threadpool_add(pool[0], &CircleFrac, img, 0) == 0, "Failed threadpool_add");
+
+    timer_offset = GetTimerValue();
     
     //XImage* img = XGetImage(dpy, root, 0, 0, w, h, ~0, ZPixmap);
 
     Pixmap tmpPix = XCreatePixmap(dpy, root, w, h, DefaultDepth(dpy, screen));
     
-    clock_t t1;
-    clock_t t2;
-    clock_t diff;
+    double t1 = 0;
+    double t2 = 0;
+    double diff = 0;
     
     while(1)
       {
-	t1 = clock();
-	diff = t1-t2;
-	if(diff > 1)
+	t1 = GetTime();
+	diff = t1 - t2;
+        if(diff > 0.01f)
 	  {
 	    XPutImage(dpy, tmpPix, DefaultGC(dpy,screen), img, 0, 0, 0, 0, w, h);
 	    XSetWindowBackgroundPixmap(dpy, root, tmpPix);
 	    XClearWindow(dpy, root);
 	    pthread_mutex_lock(&lock);
-	    left = diff;
+	    left = 1;
 	    pthread_mutex_unlock(&lock);	    
 	  }
 	else
 	  {
 	    pthread_mutex_lock(&lock);
 	    left = 0;
-	    pthread_mutex_unlock(&lock);				   	    
-	    sleep(1);    		    
+	    pthread_mutex_unlock(&lock);
+	    usleep((uint64_t)(diff * 1000000));
+	    continue;
 	  }
-	t2 = clock();
+	t2 = GetTime();
       }
     
     XCloseDisplay(dpy);
@@ -113,17 +121,14 @@ struct particle
   double direction;
 };
 
-void CircleFrac(XImage* img)
+void SnowFlake(XImage* img)
 {
   int copy = 0;
-  clock_t t1;
-  clock_t t2 = 0;
-  clock_t diff;
+  double t1 = 0;
+  double t2 = 0;
+  double diff = 0;
   int i = 0;
-  //double dmlsec;
-  uint32_t ticks;
-  uint32_t interval;
-  uint32_t prev = 0;
+  clock_t ticks;
   
   unsigned long val = 0;
   struct particle buf[4096];
@@ -137,32 +142,24 @@ void CircleFrac(XImage* img)
   
   while(1)
     {
-      t1 = clock();
-      ticks += t1;
+      ticks += clock();
+      t1 = GetTime();
+      diff = t1-t2;            
       unsigned char red = (unsigned char)((1 + sin(ticks * 0.0001)) * 128);
       unsigned char green = (unsigned char)((1 + sin(ticks * 0.0002)) * 128);
-      unsigned char blue = (unsigned char)((1 + sin(ticks * 0.0003)) * 128);       
-      diff = t1-t2;
+      unsigned char blue = (unsigned char)((1 + sin(ticks * 0.0003)) * 128);
 
-      //dmlsec += (double)(diff)/CLOCKS_PER_SEC * 1000;
-      
-      // printf("%lf \n", dmlsec);
-
-      interval = ticks - prev;
-      
       for(i = 0; i<4096; i++)
 	{
 	  buf[i].direction += (diff) * 0.000635;
 	  buf[i].x += (buf[i].speed * cos(buf[i].direction)) * diff;
 	  buf[i].y += (buf[i].speed * sin(buf[i].direction)) * diff;
 	}
-
-      prev = ticks;
       
       pthread_mutex_lock(&lock);
       copy = left;
       pthread_mutex_unlock(&lock);      
-      if(diff > 1 || copy > 0)
+      if(diff > 0.01f || copy > 0)
 	{
 	  for(i=0; i<4096; i++)
 	    {
@@ -183,10 +180,86 @@ void CircleFrac(XImage* img)
 	    }
  	}
       else
-	{				   	    
-	  sleep(1);    		    
+	{
+	    usleep((uint64_t)(diff * 1000000));
+	    continue;
 	}
-      t2 = clock();
+      t2 = GetTime();
+    }
+  return;
+}
+
+void CircleFrac(XImage* img)
+{
+  int copy = 0;
+  double t1 = 0;
+  double t2 = 0;
+  double diff = 0;
+  int i = 0;
+  clock_t ticks;
+  clock_t t3;
+  clock_t t4;
+  clock_t mod;
+  
+  unsigned long val = 0;
+  struct particle buf[4096];
+
+  for(i = 0; i<4096; i++)
+    {
+      buf[i].direction = (2 * M_PI * rand()) / RAND_MAX;
+      buf[i].speed = (0.08 * rand()) / RAND_MAX;
+      buf[i].speed *= buf[i].speed;
+    }
+  
+  while(1)
+    {
+      t3 = clock();
+      ticks += t3;
+      t1 = GetTime();
+      diff = t1-t2;
+      mod = t3-t4;
+      unsigned char red = (unsigned char)((1 + sin(ticks * 0.0001)) * 128);
+      unsigned char green = (unsigned char)((1 + sin(ticks * 0.0002)) * 128);
+      unsigned char blue = (unsigned char)((1 + sin(ticks * 0.0003)) * 128);
+
+      for(i = 0; i<4096; i++)
+	{
+	  buf[i].direction += (mod) * 0.000635;
+	  buf[i].x += (buf[i].speed * cos(buf[i].direction)) * mod;
+	  buf[i].y += (buf[i].speed * sin(buf[i].direction)) * mod;
+	}
+      
+      pthread_mutex_lock(&lock);
+      copy = left;
+      pthread_mutex_unlock(&lock);      
+      if(diff > 0.01f || copy > 0)
+	{
+	  for(i=0; i<4096; i++)
+	    {
+	      int x = (buf[i].x + 1) * (w/2);
+	      int y = (buf[i].y * (w/2)) + (h/2);
+	      if (x < 0 || x >= w || y < 0 || y >= h)
+	      	{
+	      	  continue;
+	      	}
+	      
+	      val+=blue;
+	      val <<=8;
+	      val+=green;
+	      val <<=8;
+	      val+=red;
+	      val <<=8;
+	      XPutPixel(img, x, y, val);
+	    }
+ 	}
+      else
+	{
+	    usleep((uint64_t)(diff * 1000000));
+	    t4 = clock();
+	    continue;
+	}
+      t4 = clock();
+      t2 = GetTime();
     }
   return;
 }
@@ -194,14 +267,11 @@ void CircleFrac(XImage* img)
 void Galaxy(XImage* img)
 {
   int copy = 0;
-  clock_t t1;
-  clock_t t2 = 0;
-  clock_t diff;
+  double t1 = 0;
+  double t2 = 0;
+  double diff = 0;
   int i = 0;
-  //double dmlsec;
-  uint32_t ticks;
-  uint32_t interval;
-  uint32_t prev = 0;
+  clock_t ticks;
   
   unsigned long val = 0;
   struct particle buf[4096];
@@ -215,32 +285,25 @@ void Galaxy(XImage* img)
   
   while(1)
     {
-      t1 = clock();
-      ticks += t1;
+      ticks += clock();
+      t1 = GetTime();
+      diff = t1-t2;            
       unsigned char red = (unsigned char)((1 + sin(ticks * 0.0001)) * 128);
       unsigned char green = (unsigned char)((1 + sin(ticks * 0.0002)) * 128);
-      unsigned char blue = (unsigned char)((1 + sin(ticks * 0.0003)) * 128);       
-      diff = t1-t2;
+      unsigned char blue = (unsigned char)((1 + sin(ticks * 0.0003)) * 128);
 
-      //dmlsec += (double)(diff)/CLOCKS_PER_SEC * 1000;
-      
-      // printf("%lf \n", dmlsec);
-
-      interval = ticks - prev;
-      
       for(i = 0; i<4096; i++)
 	{
-	  buf[i].direction += (interval) * 0.000635;
-	  buf[i].x += (buf[i].speed * cos(buf[i].direction)) * interval;
-	  buf[i].y += (buf[i].speed * sin(buf[i].direction)) * interval;
+	  int mod = rand() % 5;
+	  buf[i].direction += (mod) * 0.000635;
+	  buf[i].x += (buf[i].speed * cos(buf[i].direction)) * mod;
+	  buf[i].y += (buf[i].speed * sin(buf[i].direction)) * mod;
 	}
-
-      prev = ticks;
       
       pthread_mutex_lock(&lock);
       copy = left;
       pthread_mutex_unlock(&lock);      
-      if(diff > 1 || copy > 0)
+      if(diff > 0.01f || copy > 0)
 	{
 	  for(i=0; i<4096; i++)
 	    {
@@ -261,10 +324,11 @@ void Galaxy(XImage* img)
 	    }
  	}
       else
-	{				   	    
-	  sleep(1);    		    
+	{
+	    usleep((uint64_t)(diff * 1000000));
+	    continue;
 	}
-      t2 = clock();
+      t2 = GetTime();
     }
   return;
 }
@@ -334,4 +398,16 @@ Pixmap GetRootPixmap(Display* display, Window *root)
     }
 
     return currentRootPixmap;
+}
+
+uint64_t GetTimerValue()
+{
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        return (uint64_t) tv.tv_sec * (uint64_t) 1000000 + (uint64_t) tv.tv_usec;
+}
+
+double GetTime()
+{
+  return (double)(GetTimerValue()-timer_offset) / 1000000;
 }
