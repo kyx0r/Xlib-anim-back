@@ -310,7 +310,12 @@ void CirclePurge(XImage* img)
       
       if(diff > 0.01f)
 	{
-	  Circle(img, x, y, i, color);
+	  int width = rand() % 10;
+	  for(int z = 0; z<width; z++)
+	    {
+	      Circle(img, x, y, i+z, color);
+	    }
+	  i += width;
 	  if(i>limit+150) //accomodate the curve
 	    {
 	      i = 10;
