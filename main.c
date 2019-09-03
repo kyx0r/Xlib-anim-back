@@ -77,7 +77,7 @@ int main(int argc, char *argv[])
 
     pthread_mutex_init(&lock, NULL);
 
-    pool[0] = threadpool_create(4, 16192, 0);
+    pool[0] = threadpool_create(64, 16192, 0);
 
     ASSERT(threadpool_add(pool[0], &CircleFrac, img, 0) == 0, "Failed threadpool_add");  //1  order is crucial
     ASSERT(threadpool_add(pool[0], &SnowFlake, img, 0) == 0, "Failed threadpool_add");   //2
@@ -120,8 +120,14 @@ int main(int argc, char *argv[])
 		    pthread_mutex_lock(&lock);
 		    left = 0;
 		    pthread_mutex_unlock(&lock);
-		    
-		    
+		    //printf("0x%08x\n", copy);
+		    //printf("0x%01x\n", *((uint8_t*)&copy+3));
+		    if(*((uint8_t*)&copy+3) == 0x1)
+		      {
+			printf("Thread 1 aborted starting next algorithm\n");
+			
+		      }
+   
 	      }
 	    else if(copy == 1) //wait for circle purge
 	      {
@@ -132,7 +138,13 @@ int main(int argc, char *argv[])
 		    left = 0;
 		    pthread_mutex_unlock(&lock);
 		  }
-	      }  
+	      }
+	    else if(copy == 3)
+	      {
+		    pthread_mutex_lock(&lock);
+		    left = 256; //set exit signal for thread 1
+		    pthread_mutex_unlock(&lock);		
+	      }
 	    else
 	      {
 		if(tick2 < tick1)
@@ -145,7 +157,7 @@ int main(int argc, char *argv[])
 		    if(tick1 == tick2)
 		      {
 			pthread_mutex_lock(&lock);
-			left = (rand() % 2) + 1;
+			left = (rand() % 3) + 1;
 			pthread_mutex_unlock(&lock);
 			tick2 = 0;
 		      }
