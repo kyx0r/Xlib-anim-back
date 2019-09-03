@@ -38,7 +38,7 @@ static Window root;
 int w;
 int h;
 threadpool_t *pool[64];
-int left;
+int left = 0;
 pthread_mutex_t lock;
 uint64_t timer_offset;
 GC gc;
@@ -48,6 +48,7 @@ static void SetBackgroundToBitmap(Pixmap bitmap, unsigned int width, unsigned in
 void SetPixel32(uint32_t* buf, int w, int h, int x, int y, uint32_t pixel);
 Pixmap GetRootPixmap(Display* display, Window *root);
 GC create_gc(Display* display, Window win, int reverse_video);
+void CircleFill(XImage* img, int32_t centreX, int32_t centreY, int32_t radius, uint32_t color);
 void CircleFrac();
 void SnowFlake();
 void Galaxy();
@@ -92,26 +93,67 @@ int main(int argc, char *argv[])
     double t1 = 0;
     double t2 = 0;
     double diff = 0;
+    uint64_t tick1 = 0;
+    uint64_t tick2 = 0;
+    int copy;
     
     while(1)
       {
 	t1 = GetTime();
+	tick1++;
 	diff = t1 - t2;
         if(diff > 0.01f)
 	  {
 	    XPutImage(dpy, tmpPix, DefaultGC(dpy,screen), img, 0, 0, 0, 0, w, h);
 	    XSetWindowBackgroundPixmap(dpy, root, tmpPix);
 	    XClearWindow(dpy, root);
-	    pthread_mutex_lock(&lock);
-	    left = 1;
-	    pthread_mutex_unlock(&lock);	    
 	  }
 	else
 	  {
 	    pthread_mutex_lock(&lock);
-	    left = 0;
+	    copy = left;
 	    pthread_mutex_unlock(&lock);
-	    usleep((uint64_t)(diff * 1000000));
+	    
+	    if(copy == -1) //feedback signal
+	      {
+		    pthread_mutex_lock(&lock);
+		    left = 0;
+		    pthread_mutex_unlock(&lock);
+	      }
+	    else if(copy == 1) //wait for circle purge
+	      {
+		tick2++;
+		if(tick2 > 1000)
+		  {
+		    pthread_mutex_lock(&lock);
+		    left = 0;
+		    pthread_mutex_unlock(&lock);
+		  }
+	      }  
+	    else
+	      {
+		if(tick2 < tick1)
+		  {
+		    tick2 = ((rand() % 10000) + 100);
+		    tick2 += tick1;
+		  }
+		else
+		  {
+		    if(tick1 == tick2)
+		      {
+			pthread_mutex_lock(&lock);
+			left = (rand() % 2) + 1;
+			pthread_mutex_unlock(&lock);
+			tick2 = 0;
+		      }
+		    else
+		      {
+			//printf("dst %ld\n", tick2);
+			//printf("tick: %ld\n", tick1);
+		      }
+		  }				
+	      }
+	    usleep((uint64_t)(diff * 1000000)); //70 fps
 	    continue;
 	  }
 	t2 = GetTime();
@@ -165,7 +207,7 @@ void SnowFlake(XImage* img)
       pthread_mutex_lock(&lock);
       copy = left;
       pthread_mutex_unlock(&lock);      
-      if(diff > 0.01f || copy > 0)
+      if(diff > 0.01f)
 	{
 	  for(i=0; i<4096; i++)
 	    {
@@ -178,9 +220,11 @@ void SnowFlake(XImage* img)
 	      	}
 	      XPutPixel(img, x, y, color);
 	    }
-	  //printf("%d\n", transition);
-	  if(transition > 1000)
+	  if(transition > 750)
 	    {
+	      pthread_mutex_lock(&lock);
+	      left = 1;
+	      pthread_mutex_unlock(&lock); 	      
 	      for(i = 0; i<4096; i++)
 		{
 		  buf[i].x = 0;
@@ -209,6 +253,107 @@ void SnowFlake(XImage* img)
       t2 = GetTime();
     }
   return;
+}
+
+void CircleFill(XImage* img, int32_t centreX, int32_t centreY, int32_t radius, uint32_t color)
+{
+  const int32_t diameter = (radius * 2);
+
+  int32_t x = (radius - 1);
+  int32_t y = 0;
+  int32_t tx = 1;
+  int32_t ty = 1;
+  int32_t error = (tx - diameter);
+
+  while (x >= y)
+    {
+      //  Each of the following renders an octant of the circle
+      if (!(centreX + x < 0 || centreX + x >= w || centreY - y < 0 || centreY - y >= h))
+	{
+	  XPutPixel(img, centreX + x, centreY - y, 0x00FF00FF);
+	  for(int i = centreX + x; i>centreX-1; i--)
+	    {
+	      XPutPixel(img, i, centreY - y, color);
+	    }
+	}
+
+      if (!(centreX - x < 0 || centreX - x >= w || centreY + y < 0 || centreY + y >= h))
+	{
+	  XPutPixel(img, centreX - x, centreY + y, color);
+	  for(int i = centreX - x; i<centreX+1; i++)
+	    {
+	      XPutPixel(img, i, centreY + y, color);
+	    }	  
+	}
+
+      if (!(centreX + x < 0 || centreX + x >= w || centreY + y < 0 || centreY + y >= h))
+	{
+	  XPutPixel(img, centreX + x, centreY + y, color);
+	  for(int i = centreX + x; i>centreX-1; i--)
+	    {
+	      XPutPixel(img, i, centreY + y, color);
+	    }	  
+	}
+
+      if (!(centreX - x < 0 || centreX - x >= w || centreY - y < 0 || centreY - y >= h))
+	{
+ 	  XPutPixel(img, centreX - x, centreY - y, color);
+	  for(int i = centreX - x; i<centreX+1; i++)
+	    {
+	      XPutPixel(img, i, centreY - y, color);
+	    }	  
+ 	}      
+
+      if (!(centreX + y < 0 || centreX + y >= w || centreY - x < 0 || centreY - x >= h))
+	{	      		  	  
+	  XPutPixel(img, centreX + y, centreY - x, color);
+	  for(int i = centreX + y; i>centreX-1; i--)
+	    {
+	      XPutPixel(img, i, centreY - x, color);
+	    }	  
+	}      
+
+      if (!(centreX - y < 0 || centreX - y >= w || centreY + x < 0 || centreY + x >= h))
+	{	      
+	  XPutPixel(img, centreX - y, centreY + x, color);
+	  for(int i = centreX - y; i<centreX+1; i++)
+	    {
+	      XPutPixel(img, i, centreY + x, color);
+	    }	  	  
+	}
+
+      if (!(centreX + y < 0 || centreX + y >= w || centreY + x < 0 || centreY + x >= h))
+	{	      
+	  XPutPixel(img, centreX + y, centreY + x, color);
+	  for(int i = centreX + y; i>centreX-1; i--)
+	    {
+	      XPutPixel(img, i, centreY + x, color);
+	    }
+	}
+
+      if (!(centreX - y < 0 || centreX - y >= w || centreY - x < 0 || centreY - x >= h))
+	{	      
+	  XPutPixel(img, centreX - y, centreY - x, color);
+	  for(int i = centreX - y; i<centreX+1; i++)
+	    {
+	      XPutPixel(img, i, centreY - x, color);
+	    }	  	  	  
+	}
+	  
+      if (error <= 0)
+	{
+	  ++y;
+	  error += ty;
+	  ty += 2;
+	}
+
+      if (error > 0)
+	{
+	  --x;
+	  tx += 2;
+	  error += (tx - diameter);
+	}
+    }
 }
 
 void Circle(XImage* img, int32_t centreX, int32_t centreY, int32_t radius, uint32_t color)
@@ -257,7 +402,6 @@ void Circle(XImage* img, int32_t centreX, int32_t centreY, int32_t radius, uint3
       if (!(centreX + y < 0 || centreX + y >= w || centreY + x < 0 || centreY + x >= h))
 	{	      
 	  XPutPixel(img, centreX + y, centreY + x, color);
-
 	}
 
       if (!(centreX - y < 0 || centreX - y >= w || centreY - x < 0 || centreY - x >= h))
@@ -292,6 +436,7 @@ void CirclePurge(XImage* img)
   int x = w/2;
   int y = h/2;
   int limit;
+  int copy;
   if(x>y)
     {
       limit = x;
@@ -300,7 +445,7 @@ void CirclePurge(XImage* img)
     {
       limit = y;
     }
-  
+
   while(1)
     {
       t1 = GetTime();
@@ -310,12 +455,21 @@ void CirclePurge(XImage* img)
       
       if(diff > 0.01f)
 	{
+	  pthread_mutex_lock(&lock);
+	  copy = left;
+	  pthread_mutex_unlock(&lock); 
+	  if(copy == 1)
+	    {
+	      CircleFill(img, x, y, i, color);
+	      goto lim;
+	    }
 	  int width = rand() % 10;
 	  for(int z = 0; z<width; z++)
 	    {
 	      Circle(img, x, y, i+z, color);
 	    }
 	  i += width;
+	lim:
 	  if(i>limit+150) //accomodate the curve
 	    {
 	      i = 10;
@@ -375,7 +529,7 @@ void CircleFrac(XImage* img)
       pthread_mutex_lock(&lock);
       copy = left;
       pthread_mutex_unlock(&lock);      
-      if(diff > 0.01f || copy > 0)
+      if(diff > 0.01f)
 	{
 	  for(i=0; i<4096; i++)
 	    {
@@ -410,18 +564,24 @@ void CircleFrac(XImage* img)
 
 void Galaxy(XImage* img)
 {
+  struct particle buf[4096];
+
+  s:;
+  
   int copy = 0;
   double t1 = 0;
   double t2 = 0;
   double diff = 0;
   int i = 0;
   clock_t ticks;
+  int entropy = 0;
   
   unsigned long val = 0;
-  struct particle buf[4096];
 
   for(i = 0; i<4096; i++)
     {
+      buf[i].x = 0;
+      buf[i].y = 0;
       buf[i].direction = (2 * M_PI * rand()) / RAND_MAX;
       buf[i].speed = (0.08 * rand()) / RAND_MAX;
       buf[i].speed *= buf[i].speed;
@@ -431,7 +591,31 @@ void Galaxy(XImage* img)
     {
       ticks += clock();
       t1 = GetTime();
-      diff = t1-t2;            
+      diff = t1-t2;
+      
+      pthread_mutex_lock(&lock);
+      copy = left;
+      pthread_mutex_unlock(&lock);
+      if(copy == 2)
+	{
+	  for(i = 0; i<4096; i++)
+	    {
+	      buf[i].direction = (2 * M_PI * rand()) / RAND_MAX; //chaos, the end of galaxy
+	      buf[i].speed = (0.08 * rand()) / RAND_MAX;
+	      buf[i].speed *= buf[i].speed;
+	    }
+	  pthread_mutex_lock(&lock);
+	  left = -1;
+	  pthread_mutex_unlock(&lock);
+	  printf("%d\n", entropy);
+	  
+	  entropy++;
+	  if(entropy > 5)
+	    {
+	      goto s;
+	    }
+	}
+            
       unsigned char red = (unsigned char)((1 + sin(ticks * 0.0001)) * 128);
       unsigned char green = (unsigned char)((1 + sin(ticks * 0.0002)) * 128);
       unsigned char blue = (unsigned char)((1 + sin(ticks * 0.0003)) * 128);
@@ -443,11 +627,8 @@ void Galaxy(XImage* img)
 	  buf[i].x += (buf[i].speed * cos(buf[i].direction)) * mod;
 	  buf[i].y += (buf[i].speed * sin(buf[i].direction)) * mod;
 	}
-      
-      pthread_mutex_lock(&lock);
-      copy = left;
-      pthread_mutex_unlock(&lock);      
-      if(diff > 0.01f || copy > 0)
+           
+      if(diff > 0.01f)
 	{
 	  for(i=0; i<4096; i++)
 	    {
