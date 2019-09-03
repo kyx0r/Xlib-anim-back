@@ -49,6 +49,7 @@ void SetPixel32(uint32_t* buf, int w, int h, int x, int y, uint32_t pixel);
 Pixmap GetRootPixmap(Display* display, Window *root);
 GC create_gc(Display* display, Window win, int reverse_video);
 void CircleFill(XImage* img, int32_t centreX, int32_t centreY, int32_t radius, uint32_t color);
+void Circle(XImage* img, int32_t centreX, int32_t centreY, int32_t radius, uint32_t color);
 void CircleFrac();
 void SnowFlake();
 void Galaxy();
@@ -78,10 +79,10 @@ int main(int argc, char *argv[])
 
     pool[0] = threadpool_create(4, 16192, 0);
 
-    ASSERT(threadpool_add(pool[0], &CircleFrac, img, 0) == 0, "Failed threadpool_add");
-    ASSERT(threadpool_add(pool[0], &SnowFlake, img, 0) == 0, "Failed threadpool_add");
-    ASSERT(threadpool_add(pool[0], &Galaxy, img, 0) == 0, "Failed threadpool_add");
-    ASSERT(threadpool_add(pool[0], &CirclePurge, img, 0) == 0, "Failed threadpool_add");
+    ASSERT(threadpool_add(pool[0], &CircleFrac, img, 0) == 0, "Failed threadpool_add");  //1  order is crucial
+    ASSERT(threadpool_add(pool[0], &SnowFlake, img, 0) == 0, "Failed threadpool_add");   //2
+    ASSERT(threadpool_add(pool[0], &Galaxy, img, 0) == 0, "Failed threadpool_add");      //3
+    ASSERT(threadpool_add(pool[0], &CirclePurge, img, 0) == 0, "Failed threadpool_add"); //4
     
     timer_offset = GetTimerValue();
     
@@ -114,11 +115,13 @@ int main(int argc, char *argv[])
 	    copy = left;
 	    pthread_mutex_unlock(&lock);
 	    
-	    if(copy == -1) //feedback signal
+	    if((char)copy == -1) //feedback signal
 	      {
 		    pthread_mutex_lock(&lock);
 		    left = 0;
 		    pthread_mutex_unlock(&lock);
+		    
+		    
 	      }
 	    else if(copy == 1) //wait for circle purge
 	      {
@@ -152,7 +155,7 @@ int main(int argc, char *argv[])
 			//printf("tick: %ld\n", tick1);
 		      }
 		  }				
-	      }
+	      }	    
 	    usleep((uint64_t)(diff * 1000000)); //70 fps
 	    continue;
 	  }
@@ -195,22 +198,17 @@ void SnowFlake(XImage* img)
     {
       ticks += clock();
       t1 = GetTime();
-      diff = t1-t2;            
-
-      for(i = 0; i<4096; i++)
-	{
-	  buf[i].direction += (diff) * 0.000635;
-	  buf[i].x += (buf[i].speed * cos(buf[i].direction)) * diff;
-	  buf[i].y += (buf[i].speed * sin(buf[i].direction)) * diff;
-	}
-      
-      pthread_mutex_lock(&lock);
-      copy = left;
-      pthread_mutex_unlock(&lock);      
+      diff = t1-t2;
+                 
       if(diff > 0.01f)
 	{
+	  
 	  for(i=0; i<4096; i++)
 	    {
+	      buf[i].direction += (diff) * 0.000635;
+	      buf[i].x += (buf[i].speed * cos(buf[i].direction)) * diff;
+	      buf[i].y += (buf[i].speed * sin(buf[i].direction)) * diff;
+		      
 	      int x = (buf[i].x + 1) * (w/2);
 	      int y = (buf[i].y * (w/2)) + (h/2);
 	      if (x < 0 || x >= w || y < 0 || y >= h)
@@ -247,12 +245,400 @@ void SnowFlake(XImage* img)
  	}
       else
 	{
+	  pthread_mutex_lock(&lock);
+	  copy = left;
+	  pthread_mutex_unlock(&lock);
+	  if(copy == 257) //random events index ranges to 255 max, so 257-255 = 2, which is our thread.
+	    {
+	      pthread_mutex_lock(&lock);
+	      left = -1;
+	      *((char*)&left+3)=2;
+	      *((char*)&left+2)=1; // 1 = terminated thread
+	      pthread_mutex_unlock(&lock);
+	      return;
+	    }	  
 	    usleep((uint64_t)(diff * 1000000));
 	    continue;
 	}
       t2 = GetTime();
     }
   return;
+}
+
+void CirclePurge(XImage* img)
+{
+  double t1 = 0;
+  double t2 = 0;
+  double diff = 0;
+  int i = 10;
+  uint32_t color = 0;
+
+  int x = w/2;
+  int y = h/2;
+  int limit;
+  int copy;
+  if(x>y)
+    {
+      limit = x;
+    }
+  else
+    {
+      limit = y;
+    }
+
+  while(1)
+    {
+      t1 = GetTime();
+      diff = t1-t2;            
+
+      i++;
+      
+      if(diff > 0.01f)
+	{
+	  if(copy == 1)
+	    {
+	      CircleFill(img, x, y, i, color);
+	      goto lim;
+	    }
+	  int width = rand() % 10;
+	  for(int z = 0; z<width; z++)
+	    {
+	      Circle(img, x, y, i+z, color);
+	    }
+	  i += width;
+	lim:
+	  if(i>limit+150) //accomodate the curve
+	    {
+	      i = 10;
+	    }
+ 	}
+      else
+	{
+	  pthread_mutex_lock(&lock);
+	  copy = left;
+	  pthread_mutex_unlock(&lock);
+	  if(copy == 259) 
+	    {
+	      pthread_mutex_lock(&lock);
+	      left = -1;
+	      *((char*)&left+3)=4;
+	      *((char*)&left+2)=1; // 1 = terminated thread
+	      pthread_mutex_unlock(&lock);
+	      return;
+	    }	  
+	  usleep((uint64_t)(diff * 1000000));
+	  continue;
+	}
+      t2 = GetTime();
+    }
+  return;
+}
+
+
+void CircleFrac(XImage* img)
+{
+  int copy = 0;
+  double t1 = 0;
+  double t2 = 0;
+  double diff = 0;
+  int i = 0;
+  clock_t ticks;
+  clock_t t3;
+  clock_t t4;
+  clock_t mod;
+  
+  unsigned long val = 0;
+  struct particle buf[4096];
+
+  for(i = 0; i<4096; i++)
+    {
+      buf[i].direction = (2 * M_PI * rand()) / RAND_MAX;
+      buf[i].speed = (0.08 * rand()) / RAND_MAX;
+      buf[i].speed *= buf[i].speed;
+    }
+  
+  while(1)
+    {
+      t3 = clock();
+      ticks += t3;
+      t1 = GetTime();
+      diff = t1-t2;
+      mod = t3-t4;
+      unsigned char red = (unsigned char)((1 + sin(ticks * 0.0001)) * 128);
+      unsigned char green = (unsigned char)((1 + sin(ticks * 0.0002)) * 128);
+      unsigned char blue = (unsigned char)((1 + sin(ticks * 0.0003)) * 128);
+
+      for(i = 0; i<4096; i++)
+	{
+	  buf[i].direction += (mod) * 0.000635;
+	  buf[i].x += (buf[i].speed * cos(buf[i].direction)) * mod;
+	  buf[i].y += (buf[i].speed * sin(buf[i].direction)) * mod;
+	}
+            
+      if(diff > 0.01f)
+	{
+	  for(i=0; i<4096; i++)
+	    {
+	      int x = (buf[i].x + 1) * (w/2);
+	      int y = (buf[i].y * (w/2)) + (h/2);
+	      if (x < 0 || x >= w || y < 0 || y >= h)
+	      	{
+	      	  continue;
+	      	}
+	      
+	      val+=blue;
+	      val <<=8;
+	      val+=green;
+	      val <<=8;
+	      val+=red;
+	      val <<=8;
+	      //	      val +=0xFF;
+	      XPutPixel(img, x, y, val);
+	    }
+ 	}
+      else
+	{
+	  pthread_mutex_lock(&lock);
+	  copy = left;
+	  pthread_mutex_unlock(&lock);
+	  if(copy == 256) 
+	    {
+	      pthread_mutex_lock(&lock);
+	      left = -1;
+	      *((char*)&left+3)=1;
+	      *((char*)&left+2)=1; // 1 = terminated thread
+	      pthread_mutex_unlock(&lock);
+	      return;
+	    }	  
+	  usleep((uint64_t)(diff * 1000000));
+	  t4 = clock();
+	  continue;
+	}
+      t4 = clock();
+      t2 = GetTime();
+    }
+  return;
+}
+
+void Galaxy(XImage* img)
+{
+  struct particle buf[4096];
+
+  s:;
+  
+  int copy = 0;
+  double t1 = 0;
+  double t2 = 0;
+  double diff = 0;
+  int i = 0;
+  clock_t ticks;
+  int entropy = 0;
+  
+  unsigned long val = 0;
+
+  for(i = 0; i<4096; i++)
+    {
+      buf[i].x = 0;
+      buf[i].y = 0;
+      buf[i].direction = (2 * M_PI * rand()) / RAND_MAX;
+      buf[i].speed = (0.08 * rand()) / RAND_MAX;
+      buf[i].speed *= buf[i].speed;
+    }
+  
+  while(1)
+    {
+      ticks += clock();
+      t1 = GetTime();
+      diff = t1-t2;
+                  
+      unsigned char red = (unsigned char)((1 + sin(ticks * 0.0001)) * 128);
+      unsigned char green = (unsigned char)((1 + sin(ticks * 0.0002)) * 128);
+      unsigned char blue = (unsigned char)((1 + sin(ticks * 0.0003)) * 128);
+
+      for(i = 0; i<4096; i++)
+	{
+	  int mod = rand() % 5;
+	  buf[i].direction += (mod) * 0.000635;
+	  buf[i].x += (buf[i].speed * cos(buf[i].direction)) * mod;
+	  buf[i].y += (buf[i].speed * sin(buf[i].direction)) * mod;
+	}
+           
+      if(diff > 0.01f)
+	{
+	  for(i=0; i<4096; i++)
+	    {
+	      int x = (buf[i].x + 1) * (w/2);
+	      int y = (buf[i].y * (w/2)) + (h/2);
+	      if (x < 0 || x >= w || y < 0 || y >= h)
+	      	{
+	      	  continue;
+	      	}
+	      
+	      val+=blue;
+	      val <<=8;
+	      val+=green;
+	      val <<=8;
+	      val+=red;
+	      val <<=8;
+	      val +=0xFF;
+	      XPutPixel(img, x, y, val);
+	    }
+ 	}
+      else
+	{
+	  pthread_mutex_lock(&lock);
+	  copy = left;
+	  pthread_mutex_unlock(&lock);
+	  if(copy == 2)
+	    {
+	      for(i = 0; i<4096; i++)
+		{
+		  buf[i].direction = (2 * M_PI * rand()) / RAND_MAX; //chaos, the end of galaxy
+		  buf[i].speed = (0.08 * rand()) / RAND_MAX;
+		  buf[i].speed *= buf[i].speed;
+		}
+	      pthread_mutex_lock(&lock);
+	      left = -1;
+	      *((char*)&left+3) = 3; //virtual thread id
+	      *((char*)&left+2) = 0; //our task 0 = dummy callback	  
+	      pthread_mutex_unlock(&lock);
+	      entropy++;
+	      if(entropy > 5)
+		{
+		  goto s;
+		}
+	    }
+	  if(copy == 258) 
+	    {
+	      pthread_mutex_lock(&lock);
+	      left = -1;
+	      *((char*)&left+3)=3;
+	      *((char*)&left+2)=1; // 1 = terminated thread
+	      pthread_mutex_unlock(&lock);
+	      return;
+	    }		  
+	    usleep((uint64_t)(diff * 1000000));
+	    continue;
+	}
+      t2 = GetTime();
+    }
+  return;
+}
+
+static unsigned long NameToPixel(char *name, unsigned long pixel)
+{
+    XColor ecolor;
+
+    if (!name || !*name)
+	return pixel;
+    if (!XParseColor(dpy,DefaultColormap(dpy,screen),name,&ecolor)) {
+	fprintf(stderr,"%s:  unknown color \"%s\"\n","",name);
+	exit(1);
+	/*NOTREACHED*/
+    }
+    if (!XAllocColor(dpy, DefaultColormap(dpy, screen),&ecolor)) {
+	fprintf(stderr, "%s:  unable to allocate color for \"%s\"\n",
+		"", name);
+	exit(1);
+	/*NOTREACHED*/
+    }
+    if ((ecolor.pixel != BlackPixel(dpy, screen)) &&
+	(ecolor.pixel != WhitePixel(dpy, screen)) &&
+	(DefaultVisual(dpy, screen)->class & Dynamic))
+
+    return(ecolor.pixel);
+}
+
+static void SetBackgroundToBitmap(Pixmap bitmap, unsigned int width, unsigned int height)
+{
+    Pixmap pix;
+    GC gc;
+    XGCValues gc_init;
+
+    gc_init.foreground = NameToPixel(NULL, BlackPixel(dpy, screen));
+    gc_init.background = NameToPixel(NULL, WhitePixel(dpy, screen));
+    gc = XCreateGC(dpy, root, GCForeground|GCBackground, &gc_init);
+    pix = XCreatePixmap(dpy, root, width, height,
+			(unsigned int)DefaultDepth(dpy, screen));
+    XCopyPlane(dpy, bitmap, pix, gc, 0, 0, width, height, 0, 0, (unsigned long)1);
+    XSetWindowBackgroundPixmap(dpy, root, pix);
+    XFreeGC(dpy, gc);
+    XFreePixmap(dpy, bitmap);
+    XFreePixmap(dpy, pix);
+    XClearWindow(dpy, root);
+}
+
+Pixmap GetRootPixmap(Display* display, Window *root)
+{
+    Pixmap currentRootPixmap;
+    Atom act_type;
+    int act_format;
+    unsigned long nitems, bytes_after;
+    unsigned char *data = NULL;
+    Atom _XROOTPMAP_ID;
+
+    _XROOTPMAP_ID = XInternAtom(display, "_XROOTPMAP_ID", False);
+
+    if (XGetWindowProperty(display, *root, _XROOTPMAP_ID, 0, 1, False,
+                XA_PIXMAP, &act_type, &act_format, &nitems, &bytes_after,
+                &data) == Success) {
+
+        if (data) {
+            currentRootPixmap = *((Pixmap *) data);
+            XFree(data);
+        }
+    }
+
+    return currentRootPixmap;
+}
+
+uint64_t GetTimerValue()
+{
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        return (uint64_t) tv.tv_sec * (uint64_t) 1000000 + (uint64_t) tv.tv_usec;
+}
+
+double GetTime()
+{
+  return (double)(GetTimerValue()-timer_offset) / 1000000;
+}
+
+GC create_gc(Display* display, Window win, int reverse_video)
+{
+  GC gc;				/* handle of newly created GC.  */
+  unsigned long valuemask = 0;		/* which values in 'values' to  */
+					/* check when creating the GC.  */
+  XGCValues values;			/* initial values for the GC.   */
+  unsigned int line_width = 2;		/* line width for the GC.       */
+  int line_style = LineSolid;		/* style for lines drawing and  */
+  int cap_style = CapButt;		/* style of the line's edje and */
+  int join_style = JoinBevel;		/*  joined lines.		*/
+  int screen_num = DefaultScreen(display);
+
+  gc = XCreateGC(display, win, valuemask, &values);
+  if (gc < 0) {
+	fprintf(stderr, "XCreateGC: \n");
+  }
+
+  /* allocate foreground and background colors for this GC. */
+  if (reverse_video) {
+    XSetForeground(display, gc, WhitePixel(display, screen_num));
+    XSetBackground(display, gc, BlackPixel(display, screen_num));
+  }
+  else {
+    XSetForeground(display, gc, BlackPixel(display, screen_num));
+    XSetBackground(display, gc, WhitePixel(display, screen_num));
+  }
+
+  /* define the style of lines that will be drawn using this GC. */
+  XSetLineAttributes(display, gc,
+                     line_width, line_style, cap_style, join_style);
+
+  /* define the fill style for the GC. to be 'solid filling'. */
+  XSetFillStyle(display, gc, FillSolid);
+
+  return gc;
 }
 
 void CircleFill(XImage* img, int32_t centreX, int32_t centreY, int32_t radius, uint32_t color)
@@ -423,354 +809,4 @@ void Circle(XImage* img, int32_t centreX, int32_t centreY, int32_t radius, uint3
 	  error += (tx - diameter);
 	}
     }
-}
-
-void CirclePurge(XImage* img)
-{
-  double t1 = 0;
-  double t2 = 0;
-  double diff = 0;
-  int i = 10;
-  uint32_t color = 0;
-
-  int x = w/2;
-  int y = h/2;
-  int limit;
-  int copy;
-  if(x>y)
-    {
-      limit = x;
-    }
-  else
-    {
-      limit = y;
-    }
-
-  while(1)
-    {
-      t1 = GetTime();
-      diff = t1-t2;            
-
-      i++;
-      
-      if(diff > 0.01f)
-	{
-	  pthread_mutex_lock(&lock);
-	  copy = left;
-	  pthread_mutex_unlock(&lock); 
-	  if(copy == 1)
-	    {
-	      CircleFill(img, x, y, i, color);
-	      goto lim;
-	    }
-	  int width = rand() % 10;
-	  for(int z = 0; z<width; z++)
-	    {
-	      Circle(img, x, y, i+z, color);
-	    }
-	  i += width;
-	lim:
-	  if(i>limit+150) //accomodate the curve
-	    {
-	      i = 10;
-	    }
- 	}
-      else
-	{
-	  usleep((uint64_t)(diff * 1000000));
-	  continue;
-	}
-      t2 = GetTime();
-    }
-  return;
-}
-
-
-void CircleFrac(XImage* img)
-{
-  int copy = 0;
-  double t1 = 0;
-  double t2 = 0;
-  double diff = 0;
-  int i = 0;
-  clock_t ticks;
-  clock_t t3;
-  clock_t t4;
-  clock_t mod;
-  
-  unsigned long val = 0;
-  struct particle buf[4096];
-
-  for(i = 0; i<4096; i++)
-    {
-      buf[i].direction = (2 * M_PI * rand()) / RAND_MAX;
-      buf[i].speed = (0.08 * rand()) / RAND_MAX;
-      buf[i].speed *= buf[i].speed;
-    }
-  
-  while(1)
-    {
-      t3 = clock();
-      ticks += t3;
-      t1 = GetTime();
-      diff = t1-t2;
-      mod = t3-t4;
-      unsigned char red = (unsigned char)((1 + sin(ticks * 0.0001)) * 128);
-      unsigned char green = (unsigned char)((1 + sin(ticks * 0.0002)) * 128);
-      unsigned char blue = (unsigned char)((1 + sin(ticks * 0.0003)) * 128);
-
-      for(i = 0; i<4096; i++)
-	{
-	  buf[i].direction += (mod) * 0.000635;
-	  buf[i].x += (buf[i].speed * cos(buf[i].direction)) * mod;
-	  buf[i].y += (buf[i].speed * sin(buf[i].direction)) * mod;
-	}
-      
-      pthread_mutex_lock(&lock);
-      copy = left;
-      pthread_mutex_unlock(&lock);      
-      if(diff > 0.01f)
-	{
-	  for(i=0; i<4096; i++)
-	    {
-	      int x = (buf[i].x + 1) * (w/2);
-	      int y = (buf[i].y * (w/2)) + (h/2);
-	      if (x < 0 || x >= w || y < 0 || y >= h)
-	      	{
-	      	  continue;
-	      	}
-	      
-	      val+=blue;
-	      val <<=8;
-	      val+=green;
-	      val <<=8;
-	      val+=red;
-	      val <<=8;
-	      //	      val +=0xFF;
-	      XPutPixel(img, x, y, val);
-	    }
- 	}
-      else
-	{
-	    usleep((uint64_t)(diff * 1000000));
-	    t4 = clock();
-	    continue;
-	}
-      t4 = clock();
-      t2 = GetTime();
-    }
-  return;
-}
-
-void Galaxy(XImage* img)
-{
-  struct particle buf[4096];
-
-  s:;
-  
-  int copy = 0;
-  double t1 = 0;
-  double t2 = 0;
-  double diff = 0;
-  int i = 0;
-  clock_t ticks;
-  int entropy = 0;
-  
-  unsigned long val = 0;
-
-  for(i = 0; i<4096; i++)
-    {
-      buf[i].x = 0;
-      buf[i].y = 0;
-      buf[i].direction = (2 * M_PI * rand()) / RAND_MAX;
-      buf[i].speed = (0.08 * rand()) / RAND_MAX;
-      buf[i].speed *= buf[i].speed;
-    }
-  
-  while(1)
-    {
-      ticks += clock();
-      t1 = GetTime();
-      diff = t1-t2;
-      
-      pthread_mutex_lock(&lock);
-      copy = left;
-      pthread_mutex_unlock(&lock);
-      if(copy == 2)
-	{
-	  for(i = 0; i<4096; i++)
-	    {
-	      buf[i].direction = (2 * M_PI * rand()) / RAND_MAX; //chaos, the end of galaxy
-	      buf[i].speed = (0.08 * rand()) / RAND_MAX;
-	      buf[i].speed *= buf[i].speed;
-	    }
-	  pthread_mutex_lock(&lock);
-	  left = -1;
-	  pthread_mutex_unlock(&lock);
-	  printf("%d\n", entropy);
-	  
-	  entropy++;
-	  if(entropy > 5)
-	    {
-	      goto s;
-	    }
-	}
-            
-      unsigned char red = (unsigned char)((1 + sin(ticks * 0.0001)) * 128);
-      unsigned char green = (unsigned char)((1 + sin(ticks * 0.0002)) * 128);
-      unsigned char blue = (unsigned char)((1 + sin(ticks * 0.0003)) * 128);
-
-      for(i = 0; i<4096; i++)
-	{
-	  int mod = rand() % 5;
-	  buf[i].direction += (mod) * 0.000635;
-	  buf[i].x += (buf[i].speed * cos(buf[i].direction)) * mod;
-	  buf[i].y += (buf[i].speed * sin(buf[i].direction)) * mod;
-	}
-           
-      if(diff > 0.01f)
-	{
-	  for(i=0; i<4096; i++)
-	    {
-	      int x = (buf[i].x + 1) * (w/2);
-	      int y = (buf[i].y * (w/2)) + (h/2);
-	      if (x < 0 || x >= w || y < 0 || y >= h)
-	      	{
-	      	  continue;
-	      	}
-	      
-	      val+=blue;
-	      val <<=8;
-	      val+=green;
-	      val <<=8;
-	      val+=red;
-	      val <<=8;
-	      val +=0xFF;
-	      XPutPixel(img, x, y, val);
-	    }
- 	}
-      else
-	{
-	    usleep((uint64_t)(diff * 1000000));
-	    continue;
-	}
-      t2 = GetTime();
-    }
-  return;
-}
-
-static unsigned long NameToPixel(char *name, unsigned long pixel)
-{
-    XColor ecolor;
-
-    if (!name || !*name)
-	return pixel;
-    if (!XParseColor(dpy,DefaultColormap(dpy,screen),name,&ecolor)) {
-	fprintf(stderr,"%s:  unknown color \"%s\"\n","",name);
-	exit(1);
-	/*NOTREACHED*/
-    }
-    if (!XAllocColor(dpy, DefaultColormap(dpy, screen),&ecolor)) {
-	fprintf(stderr, "%s:  unable to allocate color for \"%s\"\n",
-		"", name);
-	exit(1);
-	/*NOTREACHED*/
-    }
-    if ((ecolor.pixel != BlackPixel(dpy, screen)) &&
-	(ecolor.pixel != WhitePixel(dpy, screen)) &&
-	(DefaultVisual(dpy, screen)->class & Dynamic))
-
-    return(ecolor.pixel);
-}
-
-static void SetBackgroundToBitmap(Pixmap bitmap, unsigned int width, unsigned int height)
-{
-    Pixmap pix;
-    GC gc;
-    XGCValues gc_init;
-
-    gc_init.foreground = NameToPixel(NULL, BlackPixel(dpy, screen));
-    gc_init.background = NameToPixel(NULL, WhitePixel(dpy, screen));
-    gc = XCreateGC(dpy, root, GCForeground|GCBackground, &gc_init);
-    pix = XCreatePixmap(dpy, root, width, height,
-			(unsigned int)DefaultDepth(dpy, screen));
-    XCopyPlane(dpy, bitmap, pix, gc, 0, 0, width, height, 0, 0, (unsigned long)1);
-    XSetWindowBackgroundPixmap(dpy, root, pix);
-    XFreeGC(dpy, gc);
-    XFreePixmap(dpy, bitmap);
-    XFreePixmap(dpy, pix);
-    XClearWindow(dpy, root);
-}
-
-Pixmap GetRootPixmap(Display* display, Window *root)
-{
-    Pixmap currentRootPixmap;
-    Atom act_type;
-    int act_format;
-    unsigned long nitems, bytes_after;
-    unsigned char *data = NULL;
-    Atom _XROOTPMAP_ID;
-
-    _XROOTPMAP_ID = XInternAtom(display, "_XROOTPMAP_ID", False);
-
-    if (XGetWindowProperty(display, *root, _XROOTPMAP_ID, 0, 1, False,
-                XA_PIXMAP, &act_type, &act_format, &nitems, &bytes_after,
-                &data) == Success) {
-
-        if (data) {
-            currentRootPixmap = *((Pixmap *) data);
-            XFree(data);
-        }
-    }
-
-    return currentRootPixmap;
-}
-
-uint64_t GetTimerValue()
-{
-        struct timeval tv;
-        gettimeofday(&tv, NULL);
-        return (uint64_t) tv.tv_sec * (uint64_t) 1000000 + (uint64_t) tv.tv_usec;
-}
-
-double GetTime()
-{
-  return (double)(GetTimerValue()-timer_offset) / 1000000;
-}
-
-GC create_gc(Display* display, Window win, int reverse_video)
-{
-  GC gc;				/* handle of newly created GC.  */
-  unsigned long valuemask = 0;		/* which values in 'values' to  */
-					/* check when creating the GC.  */
-  XGCValues values;			/* initial values for the GC.   */
-  unsigned int line_width = 2;		/* line width for the GC.       */
-  int line_style = LineSolid;		/* style for lines drawing and  */
-  int cap_style = CapButt;		/* style of the line's edje and */
-  int join_style = JoinBevel;		/*  joined lines.		*/
-  int screen_num = DefaultScreen(display);
-
-  gc = XCreateGC(display, win, valuemask, &values);
-  if (gc < 0) {
-	fprintf(stderr, "XCreateGC: \n");
-  }
-
-  /* allocate foreground and background colors for this GC. */
-  if (reverse_video) {
-    XSetForeground(display, gc, WhitePixel(display, screen_num));
-    XSetBackground(display, gc, BlackPixel(display, screen_num));
-  }
-  else {
-    XSetForeground(display, gc, BlackPixel(display, screen_num));
-    XSetBackground(display, gc, WhitePixel(display, screen_num));
-  }
-
-  /* define the style of lines that will be drawn using this GC. */
-  XSetLineAttributes(display, gc,
-                     line_width, line_style, cap_style, join_style);
-
-  /* define the fill style for the GC. to be 'solid filling'. */
-  XSetFillStyle(display, gc, FillSolid);
-
-  return gc;
 }
