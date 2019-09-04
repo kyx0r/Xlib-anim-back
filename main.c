@@ -50,10 +50,12 @@ Pixmap GetRootPixmap(Display* display, Window *root);
 GC create_gc(Display* display, Window win, int reverse_video);
 void CircleFill(XImage* img, int32_t centreX, int32_t centreY, int32_t radius, uint32_t color);
 void Circle(XImage* img, int32_t centreX, int32_t centreY, int32_t radius, uint32_t color);
+int bhm_line(XImage* img, uint32_t color, int x1,int y1,int x2,int y2);
 void CircleFrac();
 void SnowFlake();
 void Galaxy();
 void CirclePurge();
+void Lightning();
 uint64_t GetTimerValue();
 double GetTime();
 
@@ -83,7 +85,7 @@ int main(int argc, char *argv[])
     ASSERT(threadpool_add(pool[0], &SnowFlake, img, 0) == 0, "Failed threadpool_add");   //2
     ASSERT(threadpool_add(pool[0], &Galaxy, img, 0) == 0, "Failed threadpool_add");      //3
     ASSERT(threadpool_add(pool[0], &CirclePurge, img, 0) == 0, "Failed threadpool_add"); //4
-    
+
     timer_offset = GetTimerValue();
     
     //XImage* img = XGetImage(dpy, root, 0, 0, w, h, ~0, ZPixmap);
@@ -122,11 +124,16 @@ int main(int argc, char *argv[])
 		    pthread_mutex_unlock(&lock);
 		    //printf("0x%08x\n", copy);
 		    //printf("0x%01x\n", *((uint8_t*)&copy+3));
-		    if(*((uint8_t*)&copy+3) == 0x1)
+		    if(*((uint8_t*)&copy+3) == 0x1 && *((uint8_t*)&copy+2) == 0x1)
 		      {
-			printf("Thread 1 aborted starting next algorithm\n");
-			
+			printf("Thread 1 aborted, starting next algorithm\n");
+			ASSERT(threadpool_add(pool[0], &Lightning, img, 0) == 0, "Failed threadpool_add"); //5
 		      }
+		    if(*((uint8_t*)&copy+3) == 0x5 && *((uint8_t*)&copy+2) == 0x1)
+		      {
+			printf("Thread 5 aborted, starting next algorithm\n");
+			ASSERT(threadpool_add(pool[0], &CircleFrac, img, 0) == 0, "Failed threadpool_add"); //1
+		      }		    
    
 	      }
 	    else if(copy == 1) //wait for circle purge
@@ -145,11 +152,17 @@ int main(int argc, char *argv[])
 		    left = 256; //set exit signal for thread 1
 		    pthread_mutex_unlock(&lock);		
 	      }
+	    else if(copy == 4)
+	      {
+		    pthread_mutex_lock(&lock);
+		    left = 260; //set exit signal for thread 5
+		    pthread_mutex_unlock(&lock);		
+	      }	    
 	    else
 	      {
 		if(tick2 < tick1)
 		  {
-		    tick2 = ((rand() % 10000) + 100);
+		    tick2 = ((rand() % 1000) + 100);
 		    tick2 += tick1;
 		  }
 		else
@@ -157,7 +170,7 @@ int main(int argc, char *argv[])
 		    if(tick1 == tick2)
 		      {
 			pthread_mutex_lock(&lock);
-			left = (rand() % 3) + 1;
+			left = (rand() % 4) + 1;
 			pthread_mutex_unlock(&lock);
 			tick2 = 0;
 		      }
@@ -185,6 +198,113 @@ struct particle
   double speed;
   double direction;
 };
+
+struct bolt_t
+{
+  uint16_t x;
+  uint16_t y;
+  uint16_t len;
+  int x_comp;
+  int y_comp;
+  double angle;
+  int sx;
+  int sy;
+};
+
+void Lightning(XImage* img)
+{
+  int copy = 0;
+  double t1 = 0;
+  double t2 = 0;
+  double diff = 0;
+  int i = 0;
+  clock_t ticks;
+  int transition = 0;
+  uint32_t color = 0xFFFFFFFF;
+  
+  struct bolt_t bolt[100];
+
+  for(i=0; i<10; i++)
+    {
+      bolt[i].x = (rand() % w);
+      bolt[i].y = (rand() % h);
+      bolt[i].len = (rand() % 20)+1;
+      bolt[i].angle = rand() % 360;
+      bolt[i].x_comp = bolt[i].len * cos(-bolt[i].angle*M_PI/180) + bolt[i].x;
+      bolt[i].y_comp = bolt[i].len * sin(-bolt[i].angle*M_PI/180) + bolt[i].y;
+      bolt[i].sx = (bolt[i].x_comp - bolt[i].x);
+      bolt[i].sy = (bolt[i].y_comp - bolt[i].y);
+
+      /* printf("x: %d\n", bolt[i].x); */
+      /* printf("y: %d\n", bolt[i].y); */
+      /* printf("len: %d\n", bolt[i].len); */
+      /* printf("angle: %lf\n", bolt[i].angle); */
+      /* printf("xcomp: %d\n", bolt[i].x_comp); */
+      /* printf("ycomp: %d\n", bolt[i].y_comp); */
+      /* printf("sx: %d\n", bolt[i].sx); */
+      /* printf("sy: %d\n", bolt[i].sy); */
+    }
+
+  
+  int x = 0;
+  int y = 0;
+  while(1)
+    {
+      ticks += clock();
+      t1 = GetTime();
+      diff = t1-t2;
+                 
+      if(diff > 0.01f)
+	{
+	  for(i=0; i<10; i++)
+	    {
+	      bolt[i].x += bolt[i].sx ;
+	      bolt[i].y += bolt[i].sy ;
+	      x = bolt[i].x;
+	      y = bolt[i].y;
+	      int len = bhm_line(img, color, x, y, x-bolt[i].sx, y-bolt[i].sy);
+	      if(len > bolt[i].len)
+		{
+		  if (x < 0 || x >= w || y < 0 || y >= h)
+		    {
+		      bolt[i].x = rand() % w;
+		      bolt[i].y = rand() % h;
+		    }
+		  else
+		    {
+		      bolt[i].x = x;
+		      bolt[i].y = y;
+		    }
+		  bolt[i].len = (rand() % 20)+1;
+		  bolt[i].angle = rand() % 360;
+		  bolt[i].x_comp = bolt[i].len * cos(-bolt[i].angle*M_PI/180) + bolt[i].x;
+		  bolt[i].y_comp = bolt[i].len * sin(-bolt[i].angle*M_PI/180) + bolt[i].y;
+		  bolt[i].sx = (bolt[i].x_comp - bolt[i].x);
+		  bolt[i].sy = (bolt[i].y_comp - bolt[i].y);		  
+		}
+	    }
+	}
+      else
+	{
+	  pthread_mutex_lock(&lock);
+	  copy = left;
+	  pthread_mutex_unlock(&lock);
+	  if(copy == 260) 
+	    {
+	      pthread_mutex_lock(&lock);
+	      left = -1;
+	      *((char*)&left+3)=5;
+	      *((char*)&left+2)=1; 
+	      pthread_mutex_unlock(&lock);
+	      return;
+	    }	  
+	    usleep((uint64_t)(diff * 1000000));
+	    continue;
+	}
+      t2 = GetTime();
+    }
+  return;  
+}
 
 void SnowFlake(XImage* img)
 {
@@ -354,13 +474,14 @@ void CircleFrac(XImage* img)
   double t2 = 0;
   double diff = 0;
   int i = 0;
-  clock_t ticks;
-  clock_t t3;
-  clock_t t4;
-  clock_t mod;
+  clock_t ticks = 0;
+  clock_t t3 = 0;
+  clock_t t4 = 0;
+  clock_t mod = 0;
   
   unsigned long val = 0;
   struct particle buf[4096];
+  memset(buf, 0, sizeof(buf));
 
   for(i = 0; i<4096; i++)
     {
@@ -370,21 +491,25 @@ void CircleFrac(XImage* img)
     }
   
   while(1)
-    {
+    {      
       t3 = clock();
       ticks += t3;
       t1 = GetTime();
       diff = t1-t2;
       mod = t3-t4;
+
       unsigned char red = (unsigned char)((1 + sin(ticks * 0.0001)) * 128);
       unsigned char green = (unsigned char)((1 + sin(ticks * 0.0002)) * 128);
       unsigned char blue = (unsigned char)((1 + sin(ticks * 0.0003)) * 128);
 
-      for(i = 0; i<4096; i++)
+      if(diff < 1.0f)
 	{
-	  buf[i].direction += (mod) * 0.000635;
-	  buf[i].x += (buf[i].speed * cos(buf[i].direction)) * mod;
-	  buf[i].y += (buf[i].speed * sin(buf[i].direction)) * mod;
+	  for(i = 0; i<4096; i++)
+	    {
+	      buf[i].direction += (mod) * 0.000635;
+	      buf[i].x += (buf[i].speed * cos(buf[i].direction)) * mod;
+	      buf[i].y += (buf[i].speed * sin(buf[i].direction)) * mod;
+	    }
 	}
             
       if(diff > 0.01f)
@@ -821,4 +946,106 @@ void Circle(XImage* img, int32_t centreX, int32_t centreY, int32_t radius, uint3
 	  error += (tx - diameter);
 	}
     }
+}
+
+int bhm_line(XImage* img, uint32_t color, int x1,int y1,int x2,int y2)
+{
+  int x,y,dx,dy,dx1,dy1,px,py,xe,ye,i,pc;
+  dx=x2-x1;
+  dy=y2-y1;
+  dx1=fabs(dx);
+  dy1=fabs(dy);
+  px=2*dy1-dx1;
+  py=2*dx1-dy1;
+  if(dy1<=dx1)
+    {
+      if(dx>=0)
+	{
+	  x=x1;
+	  y=y1;
+	  xe=x2;
+	}
+      else
+	{
+	  x=x2;
+	  y=y2;
+	  xe=x1;
+	}
+      if (!(x < 0 || x >= w || y < 0 || y >= h))
+	{
+	  XPutPixel(img, x, y, color);
+	  pc++;
+	}
+      for(i=0;x<xe;i++)
+	{
+	  x=x+1;
+	  if(px<0)
+	    {
+	      px=px+2*dy1;
+	    }
+	  else
+	    {
+	      if((dx<0 && dy<0) || (dx>0 && dy>0))
+		{
+		  y=y+1;
+		}
+	      else
+		{
+		  y=y-1;
+		}
+	      px=px+2*(dy1-dx1);
+	    }
+	  if (!(x < 0 || x >= w || y < 0 || y >= h))
+	    {
+	      XPutPixel(img, x, y, color);
+	      pc++;
+	    }
+	}
+    }
+  else
+    {
+      if(dy>=0)
+	{
+	  x=x1;
+	  y=y1;
+	  ye=y2;
+	}
+      else
+	{
+	  x=x2;
+	  y=y2;
+	  ye=y1;
+	}
+      if (!(x < 0 || x >= w || y < 0 || y >= h))
+	{
+	  XPutPixel(img, x, y, color);
+	  pc++;
+	}
+      for(i=0;y<ye;i++)
+	{
+	  y=y+1;
+	  if(py<=0)
+	    {
+	      py=py+2*dx1;
+	    }
+	  else
+	    {
+	      if((dx<0 && dy<0) || (dx>0 && dy>0))
+		{
+		  x=x+1;
+		}
+	      else
+		{
+		  x=x-1;
+		}
+	      py=py+2*(dx1-dy1);
+	    }
+	  if (!(x < 0 || x >= w || y < 0 || y >= h))
+	    {
+	      XPutPixel(img, x, y, color);
+	      pc++;
+	    }
+	}
+    }
+  return pc;
 }
