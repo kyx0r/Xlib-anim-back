@@ -152,6 +152,10 @@ int main(int argc, char *argv[])
 		    pthread_mutex_unlock(&lock);
 		  }
 	      }
+	    else if(copy == 2) //stub for galaxy "end"
+	      {
+		goto nop;
+	      }
 	    else if(copy == 3)
 	      {
 		if(status[1] != 0)
@@ -171,21 +175,30 @@ int main(int argc, char *argv[])
 		pthread_mutex_lock(&lock);
 		left = 260; //set exit signal for thread 5
 		pthread_mutex_unlock(&lock);		
-	      }	    
+	      }
+	    else if(copy == 5)//stub for recursive circle in 'CircleFrag'
+	      {
+		if(status[1] != 0)
+		  {
+		    goto new_signal;
+		  }		
+		goto nop;
+	      }
 	    else
 	      {
+		nop:;
 		if(tick2 < tick1)
 		  {
 		    tick2 = ((rand() % 10000) + 100);
 		    tick2 += tick1;
 		  }
 		else
-		  {
+		  {		  
 		    if(tick1 == tick2)
 		      {
 		      new_signal:;
 			pthread_mutex_lock(&lock);
-			left = (rand() % 4) + 1;
+			left = (rand() % 5) + 1;
 			pthread_mutex_unlock(&lock);
 			tick2 = 0;
 		      }
@@ -482,6 +495,18 @@ void CirclePurge(XImage* img)
   return;
 }
 
+void recCircle(XImage* img, uint32_t color, float x, float y, float radius)
+{
+  Circle(img, x, y, radius, color);
+  usleep(1000);
+  if(radius > 8)
+  {
+    recCircle(img, color/2, x + radius/2, y, radius/2);
+    recCircle(img, color*2, x - radius/2, y, radius/2);
+    recCircle(img, color&15, x, y + radius/2, radius/2);
+    recCircle(img, color|5, x, y - radius/2, radius/2);
+  }
+}
 
 void CircleFrac(XImage* img)
 {
@@ -530,6 +555,18 @@ void CircleFrac(XImage* img)
             
       if(diff > 0.01f)
 	{
+	  if(copy == 5)
+	    {
+	      val+=blue;
+	      val <<=8;
+	      val+=green;
+	      val <<=8;
+	      val+=red;
+	      val <<=8;	      
+	      recCircle(img, val, rand() % w, rand() % h, rand() % h + 10);
+	      
+	      goto end;
+	    }
 	  for(i=0; i<4096; i++)
 	    {
 	      int x = (buf[i].x + 1) * (w/2);
@@ -548,6 +585,7 @@ void CircleFrac(XImage* img)
 	      //	      val +=0xFF;
 	      XPutPixel(img, x, y, val);
 	    }
+	end:;
  	}
       else
 	{
