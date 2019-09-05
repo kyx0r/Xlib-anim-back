@@ -56,6 +56,7 @@ void SnowFlake();
 void Galaxy();
 void CirclePurge();
 void Lightning();
+void Star();
 uint64_t GetTimerValue();
 double GetTime();
 
@@ -85,7 +86,8 @@ int main(int argc, char *argv[])
     ASSERT(threadpool_add(pool[0], &SnowFlake, img, 0) == 0, "Failed threadpool_add");   //2
     ASSERT(threadpool_add(pool[0], &Galaxy, img, 0) == 0, "Failed threadpool_add");      //3
     ASSERT(threadpool_add(pool[0], &CirclePurge, img, 0) == 0, "Failed threadpool_add"); //4
-
+    //ASSERT(threadpool_add(pool[0], &Lightning, img, 0) == 0, "Failed threadpool_add"); //5
+    //ASSERT(threadpool_add(pool[0], &Star, img, 0) == 0, "Failed threadpool_add"); //6
     timer_offset = GetTimerValue();
     
     //XImage* img = XGetImage(dpy, root, 0, 0, w, h, ~0, ZPixmap);
@@ -101,6 +103,9 @@ int main(int argc, char *argv[])
     int copy;
     char status[64]; //64 threads is the max allowance.
     memset(status, 0, sizeof(status));
+    //these threads will kick in later.
+    status[5] = 1; 
+    status[6] = 0;
     
     while(1)
       {
@@ -128,14 +133,14 @@ int main(int argc, char *argv[])
 		    //printf("0x%01x\n", *((uint8_t*)&copy+3));
 		    if(*((uint8_t*)&copy+3) == 0x1 && *((uint8_t*)&copy+2) == 0x1)
 		      {
-			printf("Thread 1 aborted, starting next algorithm\n");
+			printf("Thread 1 aborted, starting next algorithm. Time %lf\n", t1);
 			ASSERT(threadpool_add(pool[0], &Lightning, img, 0) == 0, "Failed threadpool_add"); //5
 			status[1] = 1;
 			status[5] = 0;
 		      }
 		    if(*((uint8_t*)&copy+3) == 0x5 && *((uint8_t*)&copy+2) == 0x1)
 		      {
-			printf("Thread 5 aborted, starting next algorithm\n");
+			printf("Thread 5 aborted, starting next algorithm. Time %lf\n", t1);
 			ASSERT(threadpool_add(pool[0], &CircleFrac, img, 0) == 0, "Failed threadpool_add"); //1
 			status[5] = 1;
 			status[1] = 0;
@@ -184,6 +189,15 @@ int main(int argc, char *argv[])
 		  }		
 		goto nop;
 	      }
+	    else if(copy == 6)//start Star thread
+	      {
+		if(status[6] == 0) //if thread already started
+		  {
+		    goto new_signal;
+		  }		
+	        ASSERT(threadpool_add(pool[0], &Star, img, 0) == 0, "Failed threadpool_add"); //6
+		status[6] = 0;
+	      }	    
 	    else
 	      {
 		nop:;
@@ -198,7 +212,7 @@ int main(int argc, char *argv[])
 		      {
 		      new_signal:;
 			pthread_mutex_lock(&lock);
-			left = (rand() % 5) + 1;
+			left = (rand() % 6) + 1;
 			pthread_mutex_unlock(&lock);
 			tick2 = 0;
 		      }
@@ -232,6 +246,7 @@ struct bolt_t
   uint16_t x;
   uint16_t y;
   uint16_t len;
+  uint16_t _len;
   int x_comp;
   int y_comp;
   double angle;
@@ -246,18 +261,18 @@ void Lightning(XImage* img)
   double t2 = 0;
   double diff = 0;
   int i = 0;
-  clock_t ticks;
   int transition = 0;
   uint32_t color = 0xFFFFFFFF;
   
   struct bolt_t bolt[100];
-  int num_bolts = (rand() % 100) + 5;
+  int num_bolts = (rand() % 93) + 5;
   
   for(i=0; i<num_bolts; i++)
     {
       bolt[i].x = (rand() % w);
       bolt[i].y = (rand() % h);
       bolt[i].len = (rand() % 20)+1;
+      bolt[i]._len = 0;
       bolt[i].angle = rand() % 360;
       bolt[i].x_comp = bolt[i].len * cos(-bolt[i].angle*M_PI/180) + bolt[i].x;
       bolt[i].y_comp = bolt[i].len * sin(-bolt[i].angle*M_PI/180) + bolt[i].y;
@@ -279,7 +294,6 @@ void Lightning(XImage* img)
   int y = 0;
   while(1)
     {
-      ticks += clock();
       t1 = GetTime();
       diff = t1-t2;
                  
@@ -291,8 +305,8 @@ void Lightning(XImage* img)
 	      bolt[i].y += bolt[i].sy ;
 	      x = bolt[i].x;
 	      y = bolt[i].y;
-	      int len = bhm_line(img, color, x, y, x-bolt[i].sx, y-bolt[i].sy);
-	      if(len > bolt[i].len)
+	      bolt[i]._len += bhm_line(img, color, x, y, x-bolt[i].sx, y-bolt[i].sy);
+	      if(bolt[i]._len > bolt[i].len)
 		{
 		  if (x < 0 || x >= w || y < 0 || y >= h)
 		    {
@@ -305,6 +319,7 @@ void Lightning(XImage* img)
 		      bolt[i].y = y;
 		    }
 		  bolt[i].len = (rand() % 20)+1;
+		  bolt[i]._len = 0;
 		  bolt[i].angle = rand() % 360;
 		  bolt[i].x_comp = bolt[i].len * cos(-bolt[i].angle*M_PI/180) + bolt[i].x;
 		  bolt[i].y_comp = bolt[i].len * sin(-bolt[i].angle*M_PI/180) + bolt[i].y;
@@ -323,6 +338,82 @@ void Lightning(XImage* img)
 	      pthread_mutex_lock(&lock);
 	      left = -1;
 	      *((char*)&left+3)=5;
+	      *((char*)&left+2)=1; 
+	      pthread_mutex_unlock(&lock);
+	      return;
+	    }	  
+	    usleep((uint64_t)(diff * 1000000));
+	    continue;
+	}
+      t2 = GetTime();
+    }
+  return;  
+}
+
+void Star(XImage* img)
+{
+  int copy = 0;
+  double t1 = 0;
+  double t2 = 0;
+  double diff = 0;
+  int i = 0;
+  int transition = 0;
+  uint32_t color = 0xFFFFFFFF;
+
+  struct pos
+  {
+    uint16_t x;
+    uint16_t y;
+  };
+  struct pos pos[2];
+  pos[0].x = w/4;//rand() % w;
+  pos[0].y = h/4;//rand() % h;
+  pos[1].x = pos[0].x;
+  pos[1].y = pos[0].y;
+  pos[2].x = pos[0].x;
+  pos[2].y = pos[0].y;
+
+  uint16_t rd = rand() % 20 + 10;
+  
+  while(1)
+    {
+      t1 = GetTime();
+      diff = t1-t2;
+                 
+      if(diff > 0.01f)
+	{	  
+	  CircleFill(img, pos[0].x, pos[0].y, rd, color);
+	  //right
+	  pos[1].x++;
+	  bhm_line(img, color, pos[0].x+2, pos[0].y-2, pos[1].x+2, pos[0].y-2);
+	  bhm_line(img, color, pos[0].x+1, pos[0].y-1, pos[1].x+1, pos[0].y-1);
+	  bhm_line(img, color, pos[0].x, pos[0].y, pos[1].x, pos[0].y);
+	  bhm_line(img, color, pos[0].x-1, pos[0].y+1, pos[1].x-1, pos[0].y+1);
+	  bhm_line(img, color, pos[0].x-2, pos[0].y+2, pos[1].x-2, pos[0].y+2);
+
+	  //left
+	  pos[2].x--;
+	  if(pos[2].x < 0)
+	    {
+	      pos[2].x = pos[0].x;
+	    }
+	  bhm_line(img, color, pos[0].x+2, pos[0].y-2, pos[2].x+2, pos[0].y-2);
+	  bhm_line(img, color, pos[0].x+1, pos[0].y-1, pos[2].x+1, pos[0].y-1);
+	  bhm_line(img, color, pos[0].x, pos[0].y, pos[2].x, pos[0].y);
+	  bhm_line(img, color, pos[0].x-1, pos[0].y+1, pos[2].x-1, pos[0].y+1);
+	  bhm_line(img, color, pos[0].x-2, pos[0].y+2, pos[2].x-2, pos[0].y+2);
+	  
+	}
+      else
+	{
+	  pthread_mutex_lock(&lock);
+	  copy = left;
+	  pthread_mutex_unlock(&lock);
+	  if(copy == 261) 
+	    {
+	      pthread_mutex_lock(&lock);
+	      left = -1;
+	      *((char*)&left+3)=6;
 	      *((char*)&left+2)=1; 
 	      pthread_mutex_unlock(&lock);
 	      return;
@@ -1004,7 +1095,8 @@ void Circle(XImage* img, int32_t centreX, int32_t centreY, int32_t radius, uint3
 
 int bhm_line(XImage* img, uint32_t color, int x1,int y1,int x2,int y2)
 {
-  int x,y,dx,dy,dx1,dy1,px,py,xe,ye,i,pc;
+  int x,y,dx,dy,dx1,dy1,px,py,xe,ye,i;
+  int pc = 0;
   dx=x2-x1;
   dy=y2-y1;
   dx1=fabs(dx);
