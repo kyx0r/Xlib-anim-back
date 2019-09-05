@@ -99,6 +99,8 @@ int main(int argc, char *argv[])
     uint64_t tick1 = 0;
     uint64_t tick2 = 0;
     int copy;
+    char status[64]; //64 threads is the max allowance.
+    memset(status, 0, sizeof(status));
     
     while(1)
       {
@@ -128,11 +130,15 @@ int main(int argc, char *argv[])
 		      {
 			printf("Thread 1 aborted, starting next algorithm\n");
 			ASSERT(threadpool_add(pool[0], &Lightning, img, 0) == 0, "Failed threadpool_add"); //5
+			status[1] = 1;
+			status[5] = 0;
 		      }
 		    if(*((uint8_t*)&copy+3) == 0x5 && *((uint8_t*)&copy+2) == 0x1)
 		      {
 			printf("Thread 5 aborted, starting next algorithm\n");
 			ASSERT(threadpool_add(pool[0], &CircleFrac, img, 0) == 0, "Failed threadpool_add"); //1
+			status[5] = 1;
+			status[1] = 0;
 		      }		    
    
 	      }
@@ -148,27 +154,36 @@ int main(int argc, char *argv[])
 	      }
 	    else if(copy == 3)
 	      {
-		    pthread_mutex_lock(&lock);
-		    left = 256; //set exit signal for thread 1
-		    pthread_mutex_unlock(&lock);		
+		if(status[1] != 0)
+		  {
+		    goto new_signal; //force signal regeneration
+		  }
+		pthread_mutex_lock(&lock);
+		left = 256; //set exit signal for thread 1
+		pthread_mutex_unlock(&lock);
 	      }
 	    else if(copy == 4)
 	      {
-		    pthread_mutex_lock(&lock);
-		    left = 260; //set exit signal for thread 5
-		    pthread_mutex_unlock(&lock);		
+		if(status[5] != 0)
+		  {
+		    goto new_signal;
+		  }
+		pthread_mutex_lock(&lock);
+		left = 260; //set exit signal for thread 5
+		pthread_mutex_unlock(&lock);		
 	      }	    
 	    else
 	      {
 		if(tick2 < tick1)
 		  {
-		    tick2 = ((rand() % 1000) + 100);
+		    tick2 = ((rand() % 10000) + 100);
 		    tick2 += tick1;
 		  }
 		else
 		  {
 		    if(tick1 == tick2)
 		      {
+		      new_signal:;
 			pthread_mutex_lock(&lock);
 			left = (rand() % 4) + 1;
 			pthread_mutex_unlock(&lock);
@@ -223,8 +238,9 @@ void Lightning(XImage* img)
   uint32_t color = 0xFFFFFFFF;
   
   struct bolt_t bolt[100];
-
-  for(i=0; i<10; i++)
+  int num_bolts = (rand() % 100) + 5;
+  
+  for(i=0; i<num_bolts; i++)
     {
       bolt[i].x = (rand() % w);
       bolt[i].y = (rand() % h);
@@ -256,7 +272,7 @@ void Lightning(XImage* img)
                  
       if(diff > 0.01f)
 	{
-	  for(i=0; i<10; i++)
+	  for(i=0; i<num_bolts; i++)
 	    {
 	      bolt[i].x += bolt[i].sx ;
 	      bolt[i].y += bolt[i].sy ;

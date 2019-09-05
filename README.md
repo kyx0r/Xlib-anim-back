@@ -1,5 +1,8 @@
 # Xlib-anim-back
 Allows to run animations on root window, minimum code bloat, uses Xlib.
 
-This is not complete, this will feature multithreaded rendering and such design will require proper syncronization so that
-animations can execute at correct speed. However, the options to implement that are free and open now. 
+Videos
+
+https://kyryl.xm.vu/v
+
+Mostly complete, but I might do some updates in the future, like add new algorithms. 
